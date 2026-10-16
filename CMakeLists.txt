@@ -44,5 +44,8 @@ add_custom_command(TARGET nexora POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_directory
     "${CMAKE_SOURCE_DIR}/dist"
     "$<TARGET_FILE_DIR:nexora>/web"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/nexora-browser.ico"
+    "$<TARGET_FILE_DIR:nexora>/nexora-browser.ico"
   VERBATIM
 )

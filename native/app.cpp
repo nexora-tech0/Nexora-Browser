@@ -24,6 +24,7 @@
 #include "include/cef_parser.h"
 #include "include/cef_request.h"
 #include "include/cef_request_handler.h"
+#include "include/cef_navigation_entry.h"
 #include "include/cef_values.h"
 #include "include/cef_v8.h"
 #include "include/cef_scheme.h"
@@ -983,6 +984,21 @@ void NexoraApp::ActivateTab(const std::string& tab_id, const std::string& url) {
     pending_urls_.erase(tab_id);
     CefBrowserHost::CreateBrowser(window_info, client, initial_url, browser_settings,
                                   nullptr, nullptr);
+  }
+  const auto active_browser = site_browsers_.find(tab_id);
+  if (active_browser != site_browsers_.end()) {
+    CefRefPtr<CefBrowser> browser = active_browser->second;
+    const std::string current_url = browser->GetMainFrame()->GetURL().ToString();
+    if (!current_url.empty()) {
+      SendPageEvent(browser, "navigation", tab_id, current_url);
+    }
+    CefRefPtr<CefNavigationEntry> entry =
+        browser->GetHost()->GetVisibleNavigationEntry();
+    if (entry) {
+      SendPageEvent(browser, "title", tab_id, {}, entry->GetTitle().ToString());
+    }
+    SendPageEvent(browser, "loading", tab_id, {}, {}, browser->IsLoading(),
+                  browser->CanGoBack(), browser->CanGoForward());
   }
   UpdateSiteVisibility();
 }

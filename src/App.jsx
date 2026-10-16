@@ -3,7 +3,7 @@ import {
   ArrowDownToLine, ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, Briefcase, Check, Code,
   ChevronRight, CircleHelp, CircleUserRound, Clock3, Copy, Download, FileDown, FileSearch, FolderOpen,
   Globe2, History, Home, Keyboard, LayoutGrid, Languages, LockKeyhole,
-  ListFilter, Menu, Monitor, MoreHorizontal, Palette, Pin, Plus, Puzzle, RotateCw, Search, Settings,
+  ListFilter, LoaderCircle, Menu, Monitor, MoreHorizontal, Palette, Pin, Plus, Puzzle, RotateCw, Search, Settings,
   PanelLeftClose, PanelLeftOpen, ShieldCheck, SlidersHorizontal, SplitSquareHorizontal, X, XCircle,
 } from 'lucide-react'
 import { displayTitle, ENGINE_URLS, NEW_TAB_URL, normalizeAddress } from './services/browser/addressService.js'
@@ -97,9 +97,13 @@ function AddressSuggestions({ value, onChange, onSubmitValue, onEscape, bookmark
     } else if (open && suggestions.length && event.key === 'ArrowUp') {
       event.preventDefault()
       setSelectedIndex((current) => current <= 0 ? suggestions.length - 1 : current - 1)
-    } else if (open && selectedIndex >= 0 && event.key === 'Enter') {
+    } else if (event.key === 'Enter') {
       event.preventDefault()
-      choose(suggestions[selectedIndex])
+      if (open && selectedIndex >= 0 && suggestions[selectedIndex]) {
+        choose(suggestions[selectedIndex])
+      } else {
+        onSubmitValue(value)
+      }
     }
   }
   return (
@@ -763,6 +767,10 @@ export default function App() {
   const [draggedTabId, setDraggedTabId] = useState(null)
   const addressRef = useRef(null)
   const findRef = useRef(null)
+  const tabsRef = useRef(tabs)
+  const workspaceIdRef = useRef(workspaceId)
+  tabsRef.current = tabs
+  workspaceIdRef.current = workspaceId
   const activeTab = tabs.find((tab) => tab.id === activeId) ?? tabs[0]
   const visibleTabs = tabs.filter((tab) => tab.workspaceId === workspaceId)
   const pinnedTabs = visibleTabs.filter((tab) => tab.pinned)
@@ -985,15 +993,18 @@ export default function App() {
 
   useEffect(() => {
     if (!nativeConnected) return
-    const handleNativeEvent = (event) => {
-      const detail = event.detail
+    const handleNativeEvent = (detail) => {
       if (!detail || typeof detail.type !== 'string') return
       if (detail.type === 'popup' && typeof detail.url === 'string') {
-        const tab = { ...newTab(), workspaceId }
+        const tab = {
+          ...newTab(),
+          title: displayTitle(detail.url),
+          url: detail.url,
+          workspaceId: workspaceIdRef.current,
+        }
         setTabs((current) => [...current, tab])
         setActiveId(tab.id)
         setPanel(null)
-        browserBridge.navigate(tab.id, detail.url)
         return
       }
       if (detail.type === 'downloadDirectory' && typeof detail.path === 'string') {
@@ -1054,9 +1065,9 @@ export default function App() {
         window.setTimeout(() => setNotice(''), 5000)
       }
     }
-    const currentTitle = (tabId, url) => tabs.find((tab) => tab.id === tabId)?.title || displayTitle(url)
+    const currentTitle = (tabId, url) => tabsRef.current.find((tab) => tab.id === tabId)?.title || displayTitle(url)
     return browserBridge.subscribe(handleNativeEvent)
-  }, [nativeConnected, tabs, workspaceId])
+  }, [nativeConnected])
   const bookmarkCurrent = () => {
     if (!activeTab || activeTab.url === NEW_TAB_URL) return
     const existing = bookmarks.find((item) => item.url === activeTab.url)
@@ -1231,7 +1242,7 @@ export default function App() {
         </div>
       </header>
       <div className="browser-layout">
-        {settings.compactMode && <button className="compact-sidebar-edge" type="button" aria-label="Reveal sidebar" />}
+        {settings.compactMode && <button className="compact-sidebar-edge" type="button" aria-label="Exit compact mode and show sidebar" onClick={() => setSettings((current) => ({ ...current, compactMode: false }))} />}
         <aside className={`sidebar ${settings.sidebarCollapsed ? 'is-collapsed' : ''}`} aria-label="Tabs and workspaces">
           <div className="sidebar-top">
             <div className="sidebar-brand"><AppIcon /><span>Nexora Browser</span></div>
@@ -1271,14 +1282,14 @@ export default function App() {
             {pinnedTabs.length > 0 && <div className="tab-group-label"><Pin size={12} /><span>Pinned</span></div>}
             {pinnedTabs.map((tab) => (
               <div className={`vertical-tab pinned-tab ${tab.id === activeId ? 'selected' : ''}`} role="tab" aria-selected={tab.id === activeId} tabIndex={0} key={tab.id} title={tab.title} onClick={() => { setActiveId(tab.id); setPanel(null) }} onContextMenu={(event) => showContextMenu(event, 'tab', tab.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(tab.id); setPanel(null) } }} draggable onDragStart={() => setDraggedTabId(tab.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderTab(draggedTabId, tab.id)} onDragEnd={() => setDraggedTabId(null)}>
-                <span className="tab-favicon">{tab.url === NEW_TAB_URL ? <AppIcon /> : <Globe2 size={15} />}</span><span className="vertical-tab-title">{tab.title}</span>
+                <span className="tab-favicon">{tab.isLoading ? <LoaderCircle className="tab-loading-icon" size={15} /> : tab.url === NEW_TAB_URL ? <AppIcon /> : <Globe2 size={15} />}</span><span className="vertical-tab-title">{tab.title}</span>
                 <span className="vertical-tab-actions"><button type="button" aria-label={`Unpin ${tab.title}`} onClick={(event) => { event.stopPropagation(); setTabs((current) => current.map((item) => item.id === tab.id ? { ...item, pinned: false } : item)) }}><Pin size={13} /></button><button type="button" aria-label={`Close ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id) }}><X size={14} /></button></span>
               </div>
             ))}
             {regularTabs.length > 0 && pinnedTabs.length > 0 && <div className="tab-group-label regular-tabs-label"><span>Tabs</span></div>}
             {regularTabs.map((tab) => (
               <div className={`vertical-tab ${tab.id === activeId ? 'selected' : ''} ${draggedTabId === tab.id ? 'dragging' : ''}`} role="tab" aria-selected={tab.id === activeId} tabIndex={0} key={tab.id} title={tab.title} onClick={() => { setActiveId(tab.id); setPanel(null) }} onContextMenu={(event) => showContextMenu(event, 'tab', tab.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(tab.id); setPanel(null) } }} draggable onDragStart={() => setDraggedTabId(tab.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderTab(draggedTabId, tab.id)} onDragEnd={() => setDraggedTabId(null)}>
-                <span className="tab-favicon">{tab.url === NEW_TAB_URL ? <AppIcon /> : <Globe2 size={15} />}</span><span className="vertical-tab-title">{tab.title}</span>
+                <span className="tab-favicon">{tab.isLoading ? <LoaderCircle className="tab-loading-icon" size={15} /> : tab.url === NEW_TAB_URL ? <AppIcon /> : <Globe2 size={15} />}</span><span className="vertical-tab-title">{tab.title}</span>
                 <span className="vertical-tab-actions"><button type="button" aria-label={`Pin ${tab.title}`} title="Pin tab" onClick={(event) => { event.stopPropagation(); setTabs((current) => current.map((item) => item.id === tab.id ? { ...item, pinned: true } : item)) }}><Pin size={13} /></button><button type="button" aria-label={`Close ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id) }}><X size={14} /></button></span>
               </div>
             ))}
@@ -1291,12 +1302,12 @@ export default function App() {
           </div>
         </aside>
         <main className="browser-main">
-          {settings.compactMode && <button className="compact-toolbar-edge" type="button" aria-label="Reveal toolbar" />}
+          {settings.compactMode && <button className="compact-toolbar-edge" type="button" aria-label="Exit compact mode and show toolbar" onClick={() => setSettings((current) => ({ ...current, compactMode: false }))} />}
           <div className="browser-toolbar">
             <div className="navigation-buttons">
               <IconButton label="Back" disabled={nativeConnected ? !activeTab?.canGoBack : !activeTab?.back.length} onClick={() => moveHistory('back')}><ArrowLeft size={17} /></IconButton>
               <IconButton label="Forward" disabled={nativeConnected ? !activeTab?.canGoForward : !activeTab?.forward.length} onClick={() => moveHistory('forward')}><ArrowRight size={17} /></IconButton>
-              <IconButton label={activeTab?.isLoading ? 'Stop loading' : 'Reload (Ctrl+R)'} onClick={() => {
+              <IconButton label={activeTab?.isLoading ? 'Stop loading' : 'Reload (Ctrl+R)'} disabled={activeTab?.url === NEW_TAB_URL} onClick={() => {
                 if (nativeConnected && activeTab?.url !== NEW_TAB_URL) {
                   browserBridge[activeTab.isLoading ? 'stop' : 'reload'](activeTab.id)
                 } else if (!nativeConnected && activeTab?.url !== NEW_TAB_URL) {
@@ -1328,7 +1339,7 @@ export default function App() {
                 </div>
               </form>
             ) : (
-            <form className="address-field" onSubmit={(event) => { event.preventDefault(); navigate(address) }}>
+            <form className={`address-field ${activeTab?.isLoading ? 'is-loading' : ''}`} onSubmit={(event) => { event.preventDefault(); navigate(address) }}>
               {activeTab?.url.startsWith('https://')
                 ? <LockKeyhole size={14} className="address-lock" />
                 : <Globe2 size={14} className="address-lock" />}

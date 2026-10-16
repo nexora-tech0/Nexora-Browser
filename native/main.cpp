@@ -21,6 +21,19 @@ constexpr UINT kResizeUiMessage = WM_APP + 1;
 
 CefRefPtr<NexoraApp> g_app;
 HWND g_window = nullptr;
+HICON g_window_icon = nullptr;
+HICON g_window_small_icon = nullptr;
+
+void DestroyWindowIcons() {
+  if (g_window_icon) {
+    DestroyIcon(g_window_icon);
+    g_window_icon = nullptr;
+  }
+  if (g_window_small_icon) {
+    DestroyIcon(g_window_small_icon);
+    g_window_small_icon = nullptr;
+  }
+}
 
 LRESULT CALLBACK WindowProc(HWND window,
                             UINT message,
@@ -69,13 +82,24 @@ LRESULT CALLBACK WindowProc(HWND window,
 }
 
 bool CreateMainWindow(HINSTANCE instance) {
+  const std::filesystem::path icon_path =
+      std::filesystem::path(GetExecutableDirectory()) / L"nexora-browser.ico";
+  g_window_icon = static_cast<HICON>(LoadImageW(
+      nullptr, icon_path.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+      GetSystemMetrics(SM_CYICON), LR_LOADFROMFILE));
+  g_window_small_icon = static_cast<HICON>(LoadImageW(
+      nullptr, icon_path.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+      GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE));
+
   WNDCLASSEXW window_class{};
   window_class.cbSize = sizeof(window_class);
   window_class.hInstance = instance;
   window_class.lpfnWndProc = WindowProc;
   window_class.lpszClassName = kWindowClass;
   window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-  window_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+  window_class.hIcon =
+      g_window_icon ? g_window_icon : LoadIconW(nullptr, IDI_APPLICATION);
+  window_class.hIconSm = g_window_small_icon ? g_window_small_icon : window_class.hIcon;
   window_class.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
 
   if (!RegisterClassExW(&window_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -95,6 +119,14 @@ bool CreateMainWindow(HINSTANCE instance) {
                              x, y, width, height, nullptr, nullptr, instance, nullptr);
   if (!g_window) {
     return false;
+  }
+  if (g_window_icon) {
+    SendMessageW(g_window, WM_SETICON, ICON_BIG,
+                 reinterpret_cast<LPARAM>(g_window_icon));
+  }
+  if (g_window_small_icon) {
+    SendMessageW(g_window, WM_SETICON, ICON_SMALL,
+                 reinterpret_cast<LPARAM>(g_window_small_icon));
   }
   g_app->SetWindow(g_window);
   ShowWindow(g_window, SW_SHOW);
@@ -224,11 +256,13 @@ int RunNexora(HINSTANCE instance, void* sandbox_info) {
 
   if (!CreateMainWindow(instance)) {
     CefShutdown();
+    DestroyWindowIcons();
     return EXIT_FAILURE;
   }
 
   CefRunMessageLoop();
   CefShutdown();
+  DestroyWindowIcons();
   return EXIT_SUCCESS;
 }
 
