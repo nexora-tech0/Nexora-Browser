@@ -7,6 +7,7 @@ import {
   PanelLeftClose, PanelLeftOpen, ShieldCheck, SlidersHorizontal, SplitSquareHorizontal, X, XCircle,
 } from 'lucide-react'
 import { displayTitle, ENGINE_URLS, NEW_TAB_URL, normalizeAddress } from './services/browser/addressService.js'
+import { browserBridge } from './services/browser/browserBridge.js'
 import { createSessionSnapshot, restoreSession } from './services/browser/sessionService.js'
 import { readStored, writeStored } from './storage.js'
 
@@ -59,7 +60,7 @@ function MenuOption({ icon: Icon, label, shortcut, detail, onClick, disabled = f
   )
 }
 
-function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, historyItems, searchEngine, ariaLabel, inputRef, enabled = true }) {
+function AddressSuggestions({ value, onChange, onSubmitValue, onEscape, bookmarks, historyItems, searchEngine, ariaLabel, inputRef, enabled = true }) {
   const listId = useId()
   const [open, setOpen] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1)
@@ -89,6 +90,7 @@ function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, history
     if (event.key === 'Escape') {
       setOpen(false)
       setSelectedIndex(-1)
+      onEscape()
     } else if (open && suggestions.length && event.key === 'ArrowDown') {
       event.preventDefault()
       setSelectedIndex((current) => (current + 1) % suggestions.length)
@@ -466,11 +468,11 @@ function DownloadsPanel({ downloads, onOpenSettings, isNative }) {
               </div>
               <span className={`download-status ${item.status}`}>{item.status === 'in-progress' ? 'Downloading' : item.status}</span>
               <div className="download-actions">
-                {item.status === 'in-progress' && <IconButton label={`Cancel ${item.fileName}`} onClick={() => window.nexora?.cancelDownload(item.id)}><X size={15} /></IconButton>}
-                {['failed', 'cancelled'].includes(item.status) && <IconButton label={`Retry ${item.fileName}`} onClick={() => window.nexora?.retryDownload(item.id, item.url)}><RotateCw size={15} /></IconButton>}
+                {item.status === 'in-progress' && <IconButton label={`Cancel ${item.fileName}`} onClick={() => browserBridge.cancelDownload(item.id)}><X size={15} /></IconButton>}
+                {['failed', 'cancelled'].includes(item.status) && <IconButton label={`Retry ${item.fileName}`} onClick={() => browserBridge.retryDownload(item.id, item.url)}><RotateCw size={15} /></IconButton>}
                 {item.status === 'completed' && item.path && <>
-                  <IconButton label={`Open ${item.fileName}`} onClick={() => window.nexora?.openDownload(item.id, item.path)}><FileSearch size={15} /></IconButton>
-                  <IconButton label={`Show ${item.fileName} in folder`} onClick={() => window.nexora?.showDownloadInFolder(item.id, item.path)}><FolderOpen size={15} /></IconButton>
+                  <IconButton label={`Open ${item.fileName}`} onClick={() => browserBridge.openDownload(item.id, item.path)}><FileSearch size={15} /></IconButton>
+                  <IconButton label={`Show ${item.fileName} in folder`} onClick={() => browserBridge.showDownloadInFolder(item.id, item.path)}><FolderOpen size={15} /></IconButton>
                 </>}
               </div>
             </article>
@@ -501,7 +503,7 @@ function AboutPanel({ isNative, cefVersion }) {
         <div><span>Browser engine</span><strong>{isNative ? 'Chromium Embedded Framework' : 'Not connected'}</strong></div>
         <div><span>Updates</span><strong>Not configured</strong></div>
       </div>
-      <p className="about-notice">{isNative ? 'Web content is rendered by the installed CEF runtime. This development build does not yet include a signed installer or a production Chromium sandbox configuration.' : 'This build does not render websites or make network navigation requests. Chromium version and open-source notices will be displayed when the native engine is integrated.'}</p>
+      <p className="about-notice">{isNative ? 'Web content is rendered by the installed CEF runtime with sandboxed process startup. A signed installer and production update pipeline are not configured.' : 'This interface preview does not render websites or perform network navigation. Run the native Windows app to browse with Chromium.'}</p>
     </main>
   )
 }
@@ -621,7 +623,7 @@ function SettingsPanel({ settings, setSettings, clearHistory, category, setCateg
       <SettingRow title="Download location" description={isNative ? 'Where files downloaded by Chromium are saved.' : 'Choose a folder in the native Nexora browser.'}>
         <input aria-label="Download location" value={settings.downloadDirectory} placeholder="Windows Downloads folder" readOnly />
       </SettingRow>
-      <button className="subtle-button" type="button" disabled={!isNative} onClick={() => window.nexora.chooseDownloadDirectory()}><FileSearch size={14} /> Choose folder {!isNative && <span className="unavailable-label">Desktop host required</span>}</button>
+      <button className="subtle-button" type="button" disabled={!isNative} onClick={() => browserBridge.chooseDownloadDirectory()}><FileSearch size={14} /> Choose folder {!isNative && <span className="unavailable-label">Desktop host required</span>}</button>
       <div className="setting-note"><ShieldCheck size={14} /> {isNative ? 'Chromium download progress and file actions are available in Downloads.' : 'Downloads are handled by CEF in the native browser.'}</div>
     </>
   } else if (category === 'privacy') {
@@ -647,7 +649,7 @@ function SettingsPanel({ settings, setSettings, clearHistory, category, setCateg
     content = <>
       <SettingRow title="Safe browsing" description="Website reputation checks require Chromium services."><span className="setting-status">Not implemented</span></SettingRow>
       <SettingRow title="Site permissions" description="Camera, microphone, location, and notification permissions are not managed here."><span className="setting-status">Not implemented</span></SettingRow>
-      <div className="setting-note"><ShieldCheck size={14} /> {isNative ? 'Chromium web security remains enabled. Nexora still needs site permission prompts and sandbox support.' : 'Native browser security controls are only available in the desktop browser.'}</div>
+      <div className="setting-note"><ShieldCheck size={14} /> {isNative ? 'Chromium sandboxing is enabled. Nexora still needs explicit site permission prompts and Safe Browsing configuration.' : 'Native browser security controls are only available in the desktop browser.'}</div>
     </>
   } else if (category === 'accessibility') {
     content = <>
@@ -663,12 +665,12 @@ function SettingsPanel({ settings, setSettings, clearHistory, category, setCateg
     content = <>
       <ToggleRow title="Hardware acceleration" description="Rendering settings require the native Chromium host." checked={false} onChange={() => {}} disabled />
       <SettingRow title="Native integration" description="Native Chromium host status.">
-        <span className="setting-status">{isNative ? `Connected · CEF ${window.nexora.cefVersion}` : 'Not connected'}</span>
+        <span className="setting-status">{isNative ? `Connected · CEF ${browserBridge.cefVersion}` : 'Not connected'}</span>
       </SettingRow>
     </>
   } else {
     content = <>
-      <div className="about-card"><AppIcon /><div><strong>Nexora Browser</strong><span>{isNative ? `Version 0.1.0 · CEF ${window.nexora.cefVersion}` : 'Interface prototype · version 0.1.0'}</span></div>{!isNative && <span className="prototype-badge">PROTOTYPE</span>}</div>
+      <div className="about-card"><AppIcon /><div><strong>Nexora Browser</strong><span>{isNative ? `Version 0.1.0 · CEF ${browserBridge.cefVersion}` : 'Interface prototype · version 0.1.0'}</span></div>{!isNative && <span className="prototype-badge">PROTOTYPE</span>}</div>
       <SettingRow title="Browser engine" description={isNative ? 'Web content is rendered by Chromium Embedded Framework.' : 'Web content cannot be rendered in this standalone interface.'}><span className="setting-status">{isNative ? 'Chromium connected' : 'Chromium not connected'}</span></SettingRow>
       <SettingRow title="Project" description="The Nexora desktop browser for Windows."><span className="setting-status">Nexora</span></SettingRow>
     </>
@@ -696,10 +698,8 @@ function SettingsPanel({ settings, setSettings, clearHistory, category, setCateg
 }
 
 export default function App() {
-  const nativeConnected = window.nexora?.isNative === true
-  const cefVersion = nativeConnected && typeof window.nexora.cefVersion === 'string'
-    ? window.nexora.cefVersion
-    : ''
+  const nativeConnected = browserBridge.isNative
+  const cefVersion = browserBridge.cefVersion
   const [settings, setSettings] = useState(() => {
     const saved = safeRead('settings', {}, (value) => value && typeof value === 'object' && !Array.isArray(value))
     return {
@@ -782,11 +782,14 @@ export default function App() {
     setAddress(activeTab?.url === NEW_TAB_URL ? '' : activeTab?.url ?? '')
   }, [activeTab?.id, activeTab?.url])
   useEffect(() => {
+    addressRef.current?.blur()
+  }, [activeTab?.id])
+  useEffect(() => {
     if (findOpen) findRef.current?.focus()
   }, [findOpen])
   useEffect(() => {
     if (findOpen && nativeConnected && activeTab?.url !== NEW_TAB_URL && findText) {
-      window.nexora.find(activeTab.id, findText, true, false, false)
+      browserBridge.find(activeTab.id, findText, true, false, false)
     }
   }, [activeTab?.id, findOpen, nativeConnected])
   useEffect(() => {
@@ -810,10 +813,10 @@ export default function App() {
 
   useEffect(() => {
     if (!nativeConnected || !activeTab) return
-    window.nexora.activate(activeTab.id, activeTab.url)
+    browserBridge.activate(activeTab.id, activeTab.url)
   }, [nativeConnected, activeTab?.id])
   useEffect(() => {
-    if (nativeConnected) window.nexora.setDownloadDirectory(settings.downloadDirectory)
+    if (nativeConnected) browserBridge.setDownloadDirectory(settings.downloadDirectory)
   }, [nativeConnected, settings.downloadDirectory])
 
   useEffect(() => {
@@ -825,7 +828,7 @@ export default function App() {
       const rect = workspace.getBoundingClientRect()
       const scale = window.devicePixelRatio || 1
       const visible = !panel && activeTab.url !== NEW_TAB_URL
-      window.nexora.setViewport(
+      browserBridge.setViewport(
         activeTab.id,
         Math.round(rect.left * scale),
         Math.round(rect.top * scale),
@@ -845,6 +848,25 @@ export default function App() {
     }
   }, [nativeConnected, activeTab?.id, activeTab?.url, panel, settings.showBookmarksBar, settings.sidebarWidth, settings.sidebarCollapsed, settings.compactMode])
 
+  const startFind = () => {
+    if (!nativeConnected || !activeTab || activeTab.url === NEW_TAB_URL) {
+      setNotice('Find in page is available for open websites in the desktop browser.')
+      window.setTimeout(() => setNotice(''), 3200)
+      return
+    }
+    setOpenMenu(null)
+    setFindOpen(true)
+  }
+  const closeFind = () => {
+    if (nativeConnected && activeTab) browserBridge.stopFinding(activeTab.id, true)
+    setFindText('')
+    setFindOpen(false)
+  }
+  const searchInPage = (forward = true, findNext = false, text = findText) => {
+    if (nativeConnected && activeTab && activeTab.url !== NEW_TAB_URL) {
+      browserBridge.find(activeTab.id, text, forward, false, findNext)
+    }
+  }
   const navigate = (input) => {
     const url = normalizeAddress(input, settings.searchEngine)
     if (!url) {
@@ -852,45 +874,28 @@ export default function App() {
       window.setTimeout(() => setNotice(''), 3200)
       return
     }
-    const startFind = () => {
-      if (!nativeConnected || !activeTab || activeTab.url === NEW_TAB_URL) {
-        setNotice('Find in page is available for open websites in the desktop browser.')
+    setAddress(url === NEW_TAB_URL ? '' : url)
+    setPanel(null)
+    if (nativeConnected) {
+      if (!browserBridge.navigate(activeId, url)) {
+        setNotice('The native browser could not accept the navigation request.')
         window.setTimeout(() => setNotice(''), 3200)
-        return
       }
-      setOpenMenu(null)
-      setFindOpen(true)
-    }
-    const closeFind = () => {
-      if (nativeConnected && activeTab) window.nexora.stopFinding(activeTab.id, true)
-      setFindText('')
-      setFindOpen(false)
-    }
-    const searchInPage = (forward = true, findNext = false, text = findText) => {
-      if (nativeConnected && activeTab && activeTab.url !== NEW_TAB_URL) {
-        window.nexora.find(activeTab.id, text, forward, false, findNext)
-      }
+      return
     }
     if (url === NEW_TAB_URL) {
       setTabs((current) => current.map((tab) => tab.id === activeId ? { ...tab, title: 'New tab', url, back: [...tab.back, tab.url], forward: [] } : tab))
-      if (nativeConnected) window.nexora.navigate(activeId, url)
-      setAddress('')
-      setPanel(null)
       return
     }
     const title = displayTitle(url)
     setTabs((current) => current.map((tab) => tab.id === activeId ? { ...tab, title, url, back: [...tab.back, tab.url], forward: [] } : tab))
     setAddress(url)
     setPanel(null)
-    if (nativeConnected) {
-      window.nexora.navigate(activeId, url)
-    } else {
-      setHistoryItems((current) => [{ id: crypto.randomUUID(), title, url, visitedAt: new Date().toISOString() }, ...current].slice(0, 200))
-    }
+    setHistoryItems((current) => [{ id: crypto.randomUUID(), title, url, visitedAt: new Date().toISOString() }, ...current].slice(0, 200))
   }
   const moveHistory = (direction) => {
     if (nativeConnected) {
-      window.nexora[direction](activeId)
+      browserBridge[direction](activeId)
       setPanel(null)
       return
     }
@@ -931,7 +936,7 @@ export default function App() {
     const target = tabs.find((tab) => tab.id === id)
     if (!target) return
     const others = visibleTabs.filter((tab) => tab.id !== id)
-    if (nativeConnected) others.forEach((tab) => window.nexora.closeTab(tab.id))
+    if (nativeConnected) others.forEach((tab) => browserBridge.closeTab(tab.id))
     setClosedTabs((current) => [...current, ...others].slice(-10))
     setTabs((current) => current.filter((tab) => tab.workspaceId !== workspaceId || tab.id === id))
     setActiveId(target.id)
@@ -951,7 +956,7 @@ export default function App() {
   const closeTab = (id) => {
     const closing = tabs.find((tab) => tab.id === id)
     if (!closing) return
-    if (nativeConnected) window.nexora.closeTab(id)
+    if (nativeConnected) browserBridge.closeTab(id)
     setClosedTabs((current) => [...current, closing].slice(-10))
     const workspaceTabs = tabs.filter((tab) => tab.workspaceId === closing.workspaceId)
     if (workspaceTabs.length === 1) {
@@ -988,7 +993,7 @@ export default function App() {
         setTabs((current) => [...current, tab])
         setActiveId(tab.id)
         setPanel(null)
-        window.nexora.navigate(tab.id, detail.url)
+        browserBridge.navigate(tab.id, detail.url)
         return
       }
       if (detail.type === 'downloadDirectory' && typeof detail.path === 'string') {
@@ -1022,10 +1027,15 @@ export default function App() {
       }
       if (typeof detail.tabId !== 'string') return
       if (detail.type === 'navigation' && typeof detail.url === 'string') {
-        setTabs((current) => current.map((tab) => {
-          if (tab.id !== detail.tabId || tab.url === detail.url) return tab
-          return { ...tab, title: displayTitle(detail.url), url: detail.url, back: [...tab.back, tab.url], forward: [] }
-        }))
+        setTabs((current) => current.map((tab) => tab.id === detail.tabId
+          ? {
+              ...tab,
+              title: displayTitle(detail.url),
+              url: detail.url,
+              canGoBack: typeof detail.canGoBack === 'boolean' ? detail.canGoBack : tab.canGoBack,
+              canGoForward: typeof detail.canGoForward === 'boolean' ? detail.canGoForward : tab.canGoForward,
+            }
+          : tab))
       } else if (detail.type === 'title' && typeof detail.title === 'string') {
         setTabs((current) => current.map((tab) => tab.id === detail.tabId ? { ...tab, title: detail.title } : tab))
       } else if (detail.type === 'loading') {
@@ -1045,8 +1055,7 @@ export default function App() {
       }
     }
     const currentTitle = (tabId, url) => tabs.find((tab) => tab.id === tabId)?.title || displayTitle(url)
-    window.addEventListener('nexora-native', handleNativeEvent)
-    return () => window.removeEventListener('nexora-native', handleNativeEvent)
+    return browserBridge.subscribe(handleNativeEvent)
   }, [nativeConnected, tabs, workspaceId])
   const bookmarkCurrent = () => {
     if (!activeTab || activeTab.url === NEW_TAB_URL) return
@@ -1163,7 +1172,7 @@ export default function App() {
       } else if (key === 'r') {
         event.preventDefault()
         if (nativeConnected && activeTab?.url !== NEW_TAB_URL) {
-          window.nexora[activeTab.isLoading ? 'stop' : 'reload'](activeTab.id)
+          browserBridge[activeTab.isLoading ? 'stop' : 'reload'](activeTab.id)
         } else {
           setNotice(activeTab?.url === NEW_TAB_URL ? '' : 'Reload requires the native Chromium host.')
           window.setTimeout(() => setNotice(''), 3200)
@@ -1209,16 +1218,16 @@ export default function App() {
   return (
     <div className={`app-shell ${settings.compactMode ? 'is-compact' : ''} ${settings.sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--sidebar-width': `${settings.sidebarWidth}px` }}>
       <header className="titlebar" onMouseDown={(event) => {
-        if (nativeConnected && event.button === 0 && !event.target.closest('button')) window.nexora.windowAction('drag')
+        if (nativeConnected && event.button === 0 && !event.target.closest('button')) browserBridge.windowAction('drag')
       }} onDoubleClick={(event) => {
-        if (nativeConnected && !event.target.closest('button')) window.nexora.windowAction('toggleMaximize')
+        if (nativeConnected && !event.target.closest('button')) browserBridge.windowAction('toggleMaximize')
       }}>
         <div className="app-identity"><AppIcon /><span>Nexora</span></div>
         <div className="window-title">{pageTitle} — Nexora Browser</div>
         <div className="window-actions" aria-label="Window controls">
-          <button aria-label="Minimize window" title="Minimize" onClick={() => nativeConnected ? window.nexora.windowAction('minimize') : setNotice('Window controls require the native desktop host.')}>−</button>
-          <button aria-label="Maximize or restore window" title="Maximize or restore" onClick={() => nativeConnected ? window.nexora.windowAction('toggleMaximize') : setNotice('Window controls require the native desktop host.')}>□</button>
-          <button aria-label="Close window" title="Close" onClick={() => nativeConnected ? window.nexora.windowAction('close') : setNotice('Close Nexora using the desktop window controls.')}>×</button>
+          <button aria-label="Minimize window" title="Minimize" onClick={() => nativeConnected ? browserBridge.windowAction('minimize') : setNotice('Window controls require the native desktop host.')}>−</button>
+          <button aria-label="Maximize or restore window" title="Maximize or restore" onClick={() => nativeConnected ? browserBridge.windowAction('toggleMaximize') : setNotice('Window controls require the native desktop host.')}>□</button>
+          <button aria-label="Close window" title="Close" onClick={() => nativeConnected ? browserBridge.windowAction('close') : setNotice('Close Nexora using the desktop window controls.')}>×</button>
         </div>
       </header>
       <div className="browser-layout">
@@ -1289,7 +1298,7 @@ export default function App() {
               <IconButton label="Forward" disabled={nativeConnected ? !activeTab?.canGoForward : !activeTab?.forward.length} onClick={() => moveHistory('forward')}><ArrowRight size={17} /></IconButton>
               <IconButton label={activeTab?.isLoading ? 'Stop loading' : 'Reload (Ctrl+R)'} onClick={() => {
                 if (nativeConnected && activeTab?.url !== NEW_TAB_URL) {
-                  window.nexora[activeTab.isLoading ? 'stop' : 'reload'](activeTab.id)
+                  browserBridge[activeTab.isLoading ? 'stop' : 'reload'](activeTab.id)
                 } else if (!nativeConnected && activeTab?.url !== NEW_TAB_URL) {
                   setNotice('Reload requires the native Chromium host.')
                 }
@@ -1323,7 +1332,18 @@ export default function App() {
               {activeTab?.url.startsWith('https://')
                 ? <LockKeyhole size={14} className="address-lock" />
                 : <Globe2 size={14} className="address-lock" />}
-              <AddressSuggestions inputRef={addressRef} ariaLabel="Address and search" value={address} onChange={setAddress} onSubmitValue={navigate} bookmarks={bookmarks} historyItems={historyItems} searchEngine={settings.searchEngine} enabled={settings.searchSuggestions} />
+              <AddressSuggestions
+                inputRef={addressRef}
+                ariaLabel="Address and search"
+                value={address}
+                onChange={setAddress}
+                onSubmitValue={navigate}
+                onEscape={() => setAddress(activeTab?.url === NEW_TAB_URL ? '' : activeTab?.url ?? '')}
+                bookmarks={bookmarks}
+                historyItems={historyItems}
+                searchEngine={settings.searchEngine}
+                enabled={settings.searchSuggestions}
+              />
               {activeTab?.url !== NEW_TAB_URL && <IconButton label={isBookmarked ? 'Remove bookmark' : 'Add bookmark'} active={isBookmarked} onClick={bookmarkCurrent}>{isBookmarked ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}</IconButton>}
             </form>
             )}
