@@ -1,10 +1,8 @@
-<<<<<<< HEAD
-# Nexora-Browser
-A Browser with good appearance and customization with built in Ad-Blocker (Prototype)
-=======
 # Nexora Browser
 
-Nexora is a Windows x64 desktop browser prototype. Its React interface is hosted by a native C++ application and real websites are rendered by the Chromium Embedded Framework (CEF). The checked-in project does not contain the CEF distribution; the build uses the compatible CEF package already extracted on this development machine.
+Nexora is a Windows x64 desktop browser built with a React/Vite interface and a native C++ host using the Chromium Embedded Framework (CEF). Website content is rendered by real CEF browser instances; the Vite-only development server is an interface preview and does not provide Chromium website rendering.
+
+This repository is an active development build, not a signed installer or a production-ready secure browser. See the [architecture audit](docs/ARCHITECTURE.md) for verified capabilities, known limitations, and the recommended implementation order.
 
 ## Requirements
 
@@ -12,29 +10,15 @@ Nexora is a Windows x64 desktop browser prototype. Its React interface is hosted
 - Node.js and npm
 - Visual Studio 2026 with the Desktop development with C++ workload and Windows SDK
 - CMake installed with Visual Studio
-- CEF 154 Windows x64 binary distribution
+- A compatible CEF 154 Windows x64 binary distribution
 
-The build script looks for CEF under `F:\Nexora-CEF`. To use another extraction, set `CEF_ROOT` or pass `-CefRoot` to the PowerShell script. It does not download CEF or install system tools.
+The build script searches `F:\Nexora-CEF` by default. To use a different extracted CEF distribution, set `CEF_ROOT` or pass `-CefRoot` to the PowerShell build script. The script does not download CEF or install system tools.
 
-## CEF source and examples
+## CEF package
 
-The extracted CEF 154 package already includes the source needed to build a CEF
-application: public API headers in `include`, the C++ wrapper implementation in
-`libcef_dll`, and upstream sample applications in `tests\cefsimple` and
-`tests\cefclient`. The Nexora build uses the headers and wrapper directly, and
-its Windows manifest is based on the bundled `cefsimple` sample. These files
-are available under
-`F:\Nexora-CEF\cef_binary_154.0.32+g682c378+chromium-154.0.8037.58_windows64`.
+The external CEF distribution provides the public API headers, C++ wrapper implementation, runtime, resources, and upstream samples used to build Nexora. A separate Chromium source checkout is not required for ordinary browser features; changing Chromium itself would require the complete, coordinated Chromium source tree and its build environment. Keep the CEF package external to this repository.
 
-CEF is the prebuilt Chromium engine and its supported embedding API; a separate
-Chromium source checkout is not required to build or extend Nexora's browser
-features. Chromium source is only needed for changes inside the engine itself,
-and cannot be usefully assembled from a few standalone files because it has a
-large, coordinated source tree and build dependency set. Keep the CEF package
-external to this repository and use its samples as implementation references
-rather than copying the sample applications wholesale.
-
-## Build and launch the native browser
+## Build and run
 
 From PowerShell in the project directory:
 
@@ -42,44 +26,57 @@ From PowerShell in the project directory:
 npm.cmd run build:windows
 ```
 
-To build and launch:
+Build and launch:
 
 ```powershell
 npm.cmd run start:windows
 ```
 
-The browser executable and required CEF runtime files are placed in `build\windows\Release`. The CEF profile is kept beside the executable in `build\windows\Release\profile`. For a custom CEF location:
+The executable and packaged CEF files are produced under `build\windows\Release`. For a non-default CEF location:
 
 ```powershell
 $env:CEF_ROOT = 'F:\path\to\cef_binary_windows64'
 npm.cmd run start:windows
 ```
 
-The UI-only Vite prototype can still be run separately:
+To run only the React interface preview:
 
 ```powershell
 npm.cmd run dev
 ```
 
-## Browser capabilities
+The Vite preview is not connected to CEF and cannot render external websites as browser tabs.
 
-- Chromium-backed website rendering and URL/search navigation
-- Multiple live CEF browser instances managed as Nexora tabs
-- Back, forward, reload, stop, page titles, loading state, and browser keyboard shortcuts
-- Pop-ups routed into Nexora tabs
-- Local bookmarks and settings stored by the app UI
-- Visit records captured after successful page loads in Nexora
-- Real CEF downloads with progress, cancel, retry, open-file, and show-in-folder actions
-- A configurable download folder and persistent download records in the CEF profile
-- Local internal pages for bookmarks, recent activity, downloads, and settings
+Run the current Node.js unit tests:
 
-The native bridge is injected only into Nexora's packaged local UI page. Download file actions are limited to files within folders explicitly configured for downloads. Website renderers do not receive the bridge or arbitrary filesystem/process access, and Chromium web security remains enabled.
+```powershell
+npm.cmd test
+```
 
-## Known limitations
+The current automated suite covers URL normalization and page-title formatting only. It does not replace native CEF integration testing.
 
-- This is a development build, not a signed or packaged installer.
-- The current CEF setup runs without the Chromium sandbox because the extracted binary distribution does not include the sandbox library. Do not distribute it as a production browser; sandbox support and installer hardening are required first.
-- Browser history shown in Nexora records successful navigations made in this app; it is separate from Chrome/other browsers and clearing this list does not erase cookies or cache.
-- Site permission prompts, extension installation, sync, and update delivery are not implemented.
-- The CEF runtime is provided separately and is not committed to the repository.
->>>>>>> 73cb182 (Initial Nexora Browser commit)
+## Implemented capabilities
+
+- Real HTTP/HTTPS rendering through CEF in the native Windows application
+- Multiple browser tabs with navigation, back/forward, reload/stop, loading and title events
+- Address/search bar, configured search engine, and local bookmark/history suggestions
+- Workspaces, vertical tabs, pinning, reordering, context menus, and keyboard shortcuts
+- Persistent bookmarks, settings, workspaces, history, and download records in the trusted UI's local storage
+- Native CEF downloads with progress, cancel/retry, a configurable folder, and open/show-in-folder actions
+- Popup routing into browser tabs
+- Local internal pages for bookmarks, history, downloads, settings, and browser information
+- A sparse new-tab page with Nexora identity and bookmark shortcuts; the toolbar remains the only address/search field
+
+## Security and known limitations
+
+- **Not production-ready:** `native/main.cpp` explicitly sets `no_sandbox = true`. The external CEF runtime inspected for this build does not include an obvious sandbox library. Do not distribute this build as a secure everyday browser; verify and implement a supported CEF sandbox configuration first.
+- Site permission prompts and stored permission decisions are not implemented.
+- Private browsing, extension installation, sync, update delivery, and ad blocking are not implemented.
+- Tabs and tab navigation state are not restored after restart. Workspace definitions persist, but the tab collection is currently in memory.
+- History records successful Nexora page loads. Clearing that list does not clear cookies, cache, or other CEF profile data.
+- The browser profile currently resides beside the executable in the build output, not in a stable per-user application-data location.
+- The native browser UI and bridge are implemented in a small number of large files; automated unit/integration tests and a signed installer are not yet present.
+- The native window uses a separate child CEF view for website content. Focus, layering, resize, and high-DPI behavior need further native integration testing.
+- The CEF runtime is supplied separately and is not committed to this repository.
+
+Do not interpret a successful frontend or native build as proof that these release blockers have been resolved. Consult the [architecture audit](docs/ARCHITECTURE.md) before taking on larger refactors.

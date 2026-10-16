@@ -6,14 +6,8 @@ import {
   ListFilter, Menu, Monitor, MoreHorizontal, Palette, Pin, Plus, Puzzle, RotateCw, Search, Settings,
   PanelLeftClose, PanelLeftOpen, ShieldCheck, SlidersHorizontal, SplitSquareHorizontal, X, XCircle,
 } from 'lucide-react'
+import { displayTitle, ENGINE_URLS, NEW_TAB_URL, normalizeAddress } from './services/browser/addressService.js'
 import { readStored, writeStored } from './storage.js'
-
-const NEW_TAB_URL = 'nexora://newtab'
-const ENGINE_URLS = {
-  Google: 'https://www.google.com/search?q=',
-  Bing: 'https://www.bing.com/search?q=',
-  DuckDuckGo: 'https://duckduckgo.com/?q=',
-}
 
 const defaultSettings = {
   searchEngine: 'Google',
@@ -60,32 +54,6 @@ function MenuOption({ icon: Icon, label, shortcut, detail, onClick, disabled = f
       {shortcut && <kbd>{shortcut}</kbd>}
     </button>
   )
-}
-
-function displayTitle(url) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '') || 'New tab'
-  } catch {
-    return 'New tab'
-  }
-}
-
-function normalizeAddress(input, engine) {
-  const value = input.trim()
-  if (!value) return NEW_TAB_URL
-  if (/^(javascript|data|file):/i.test(value)) return null
-  if (value === 'nexora://newtab') return NEW_TAB_URL
-  if (/^https?:\/\//i.test(value)) {
-    try {
-      return new URL(value).href
-    } catch {
-      return null
-    }
-  }
-  if (/^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/i.test(value) && !/\s/.test(value)) {
-    return `https://${value}`
-  }
-  return `${ENGINE_URLS[engine] ?? ENGINE_URLS.Google}${encodeURIComponent(value)}`
 }
 
 function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, historyItems, searchEngine, ariaLabel, inputRef }) {
