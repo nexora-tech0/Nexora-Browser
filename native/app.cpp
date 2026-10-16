@@ -420,7 +420,7 @@ class BrowserClient final : public CefClient,
     const bool alt = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
     const int key = event.windows_key_code;
     const bool browser_shortcut =
-        (control && (key == 'L' || key == 'T' || key == 'W' || key == 'R' ||
+        (control && (key == 'F' || key == 'L' || key == 'T' || key == 'W' || key == 'R' ||
                      key == VK_TAB)) ||
         (control && shift && key == 'T') || (alt && shift && (key == 'B' || key == 'C'));
     if (browser_shortcut) {
@@ -476,7 +476,8 @@ void NexoraApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
       "navigate", "activate", "closeTab", "back", "forward",
       "reload", "stop", "setViewport", "windowAction",
       "setDownloadDirectory", "chooseDownloadDirectory", "cancelDownload",
-      "retryDownload", "openDownload", "showDownloadInFolder"};
+      "retryDownload", "openDownload", "showDownloadInFolder", "find",
+      "stopFinding"};
   for (const auto& name : functions) {
     CefRefPtr<CefV8Value> function =
         CefV8Value::CreateFunction(name, handler);
@@ -541,6 +542,22 @@ void NexoraApp::HandleUiCommand(CefRefPtr<CefListValue> args) {
       found->second->Reload();
     } else if (command == "stop") {
       found->second->StopLoad();
+    }
+  } else if (command == "find" && args->GetSize() == 6 &&
+             args->GetType(3) == VTYPE_BOOL &&
+             args->GetType(4) == VTYPE_BOOL &&
+             args->GetType(5) == VTYPE_BOOL) {
+    const auto found = site_browsers_.find(string_arg(1));
+    const std::string text = string_arg(2);
+    if (found != site_browsers_.end() && text.size() <= 4096) {
+      found->second->GetHost()->Find(text, args->GetBool(3), args->GetBool(4),
+                                     args->GetBool(5));
+    }
+  } else if (command == "stopFinding" && args->GetSize() == 3 &&
+             args->GetType(2) == VTYPE_BOOL) {
+    const auto found = site_browsers_.find(string_arg(1));
+    if (found != site_browsers_.end()) {
+      found->second->GetHost()->StopFinding(args->GetBool(2));
     }
   } else if (command == "setViewport" && args->GetSize() == 7) {
     const auto number_arg = [&args](size_t index, double& output) {

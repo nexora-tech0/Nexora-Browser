@@ -1,94 +1,95 @@
-# Nexora Browser: Architecture and Implementation Audit
+# Nexora Browser Architecture Audit
 
 Audit date: 2026-10-16
 
-This document records the existing implementation before larger architectural changes. It intentionally describes the repository as it exists today; requested future features are not represented as implemented.
+## Scope and status
+
+This document records the repository state before the planned modular refactors. Nexora is a native Windows C++20 application hosting a CEF browser for its local React/Vite interface and separate CEF browser instances for website tabs. It is not an Electron application, and the Vite development server is only an interface preview.
+
+The project is an active development build. A successful frontend build does not establish that the CEF runtime, native lifecycle, security configuration, or packaged application is production-ready.
 
 ## Current architecture
 
 ### Frontend
 
-- `src/main.jsx` mounts a single React application.
-- `src/App.jsx` currently owns the browser shell, tab and workspace state, navigation, local persistence, native event handling, downloads, and internal pages. It is the primary frontend implementation file and is over 1,300 lines.
-- `src/styles.css` contains the design tokens and all browser/internal-page styles in one stylesheet. It contains repeated overrides from earlier visual passes.
-- `src/storage.js` wraps JSON reads and writes to `localStorage`. Its values are not versioned, and storage failures are logged to the browser console.
-- `src/services/browser/addressService.js` now contains the pure URL normalization and title-formatting helpers, with focused tests using Node's built-in test runner.
-- `package.json` has Vite build/dev scripts, the Windows native build/launch scripts, and `npm test`. There is no frontend test dependency.
+- `src/main.jsx` mounts the React application and global stylesheet.
+- `src/App.jsx` contains the browser shell, tab/workspace state, toolbar, address suggestions, settings, internal panels, menus, and event handling in one large component module.
+- `src/styles.css` contains the complete interface style system and layout rules in one large stylesheet. It has repeated/overriding rules for layout elements such as the sidebar and address field, as well as repeated responsive breakpoints.
+- `src/services/browser/addressService.js` normalizes addresses and builds search URLs.
+- `src/storage.js` wraps browser `localStorage` access with error logging.
+- Vite builds the frontend into `dist`; CMake copies the generated UI into the native executable's `web` directory.
 
-The latest UI pass is part of the current application: the sidebar identity is compact, the new-tab page has no second search input or recent-history list, the width slider is in Appearance settings rather than the sidebar footer, and the History utility opens the dedicated history page. The toolbar address input remains authoritative for URL entry and search.
+The React UI runs inside a privileged `nexora://app/` CEF browser. In the native host, the bridge is exposed only to the main frame whose URL exactly matches the configured UI URL. Bridge commands are sent to the browser process as CEF process messages. The plain Vite preview has no native bridge and cannot render actual browser tabs.
 
-### Native host and CEF
+### Native host and website views
 
-- `native/main.cpp` initializes CEF, registers a custom window class, creates the main Win32 window, and runs the CEF message loop.
-- `native/app.cpp` contains the application object, CEF handlers, trusted UI scheme/resource handler, native bridge, site browser lifecycle, viewport placement, popup routing, and download actions.
-- `native/app.h` holds the main application type and its browser/download state.
-- `CMakeLists.txt` builds the CEF wrapper and the `nexora` executable, copies CEF runtime/resources, and packages the Vite output into the executable's `web` directory.
-- `scripts/build-windows.ps1` builds the Vite interface, configures CMake against an externally supplied CEF distribution, builds the executable, and optionally launches it.
+- `native/main.cpp` initializes CEF, creates the Win32 top-level window, and runs the CEF message loop.
+- `native/app.cpp` currently owns the custom `nexora` scheme handler, bridge registration and command dispatch, browser clients, navigation policy, tab/browser lifecycle, popup routing, viewport positioning, keyboard forwarding, and download handling.
+- `native/app.h` declares the application state, including one UI browser and a map of website browsers keyed by tab ID.
+- The website browsers are native child windows positioned over the viewport reported by the React UI. The UI browser occupies the main client area behind them.
+- CEF is supplied externally; the repository build expects a compatible Windows x64 CEF package and does not build Chromium.
 
-The browser chrome is a CEF child window loading `nexora://app/index.html`. Website tabs use separate native CEF browser windows positioned over the React content viewport. The UI reports viewport coordinates and dimensions to the host; the host hides inactive views and resizes the active one.
+### Build and tests
 
-### Native bridge and navigation boundary
+- `package.json` defines the Vite build, Node test suite, and Windows CMake build/launch scripts.
+- `CMakeLists.txt` builds the native executable and copies CEF runtime/resources and the generated UI.
+- `scripts/build-windows.ps1` locates CEF and Visual Studio, runs the Vite build, then configures and builds the Windows executable.
+- `tests/addressService.test.js` covers address normalization and page-title formatting. There are no native CEF integration tests in the current test suite.
 
-- The render-process handler adds `window.nexora` only to the main frame whose URL exactly matches the packaged UI URL.
-- The browser-process handler accepts bridge messages only from the UI browser's renderer, main frame, and expected URL.
-- Native navigation permits HTTP and HTTPS for website main frames. The UI browser is restricted to the `nexora://app/` route; web content does not get the Nexora bridge.
-- C++ checks command names, argument counts, CEF value types, URL schemes, and viewport bounds, but the command contract is embedded in `app.cpp`. Several invalid commands are silently ignored, and identifiers and strings do not have a common, explicit validation policy.
-- A loopback remote-debugging port can be enabled by `NEXORA_DEVTOOLS_PORT`; it should remain unset during ordinary use.
+## Verified feature inventory
 
-These checks provide useful origin separation, but they are not a substitute for a documented, centralized bridge contract and independent validation of every native command.
+| Area | Current status |
+| --- | --- |
+| Website rendering | Implemented through real CEF website browser instances in the native Windows host. Not available in Vite-only preview. |
+| Navigation | Native HTTP/HTTPS navigation, back/forward, reload/stop, page title/loading events, and address normalization are implemented. |
+| Tabs | Multiple in-memory tabs, activation, closing, reopening recently closed tabs, pinning, reordering, and popup-to-tab routing are present. Tab/session restoration after restart is not implemented. |
+| Workspaces | Workspace definitions and active workspace are stored in local storage; tabs are associated with workspaces in memory. Tab collections do not survive restart. |
+| Bookmarks | Local-storage-backed bookmark management and toolbar/new-tab shortcuts are present. Bookmark folders and import/export are not implemented. |
+| History | Successful native page loads are recorded in local storage. Clearing the list does not clear the CEF profile's cookies or cache. |
+| Downloads | Native CEF downloads support progress events, cancellation/retry, configurable location, and open/show-in-folder actions. |
+| Internal pages | Bookmarks, history, downloads, settings, and about panels are implemented in the React UI. |
+| Search/address | The toolbar supports URL normalization, configured search engines, and local bookmark/history suggestions. Remote search suggestions are not implemented. |
+| Keyboard shortcuts | The native browser forwards supported shortcuts to the UI; the UI handles tab and navigation shortcuts. |
+| Private browsing | Not implemented. |
+| Site permissions | Not implemented. |
+| Extension installation | Not implemented. |
+| Ad blocking | Not implemented. |
+| Split view | Not implemented. |
+| Sync and updater | Not implemented. |
+| Installer/signing | Not implemented or verified. |
 
-## Feature status
+The README contains no merge-conflict markers in the audited worktree. It already documents the existing architecture, available features, and limitations; it now links to this audit.
 
-| Area | Status in current code | Important gap |
-|---|---|---|
-| CEF website rendering | Implemented in the native build | Sandbox is disabled; runtime lifecycle/layering still needs broader testing |
-| Navigation | HTTP/HTTPS navigation, back/forward, reload/stop, titles and loading events | No automated navigation/lifecycle tests; native focus behavior needs investigation |
-| Tabs | Native browser view per tab when activated; close, switch, pin, reorder, duplicate, restore recently closed | Tabs and session state are not persisted; browser focus is assigned during each visibility update |
-| Workspaces | Create, rename, remove, switch, and persist workspace definitions | The tab collection is not restored, and workspace ordering is not implemented |
-| Address/search | URL/domain normalization, selected search engine, local bookmark/history suggestions, Ctrl+L focus | Pure address helper is tested; UI/autocomplete/native navigation integration remains untested |
-| Bookmarks | Add/remove/edit, duplicate handling, bar, import/export, local persistence | No folders or storage migrations |
-| History | Successful native page loads are recorded; filter, group, delete, clear | Stored in UI local storage; clear does not clear website data |
-| Downloads | CEF callbacks, progress, cancel/retry, configured folder, open/reveal actions | No automated tests; files remain untrusted; records are UI-local data |
-| Settings | Theme, accent, density, search engine, startup/home, download location, sidebar and privacy labels | Some listed controls/features remain unavailable; no schema versioning |
-| Popups | User-initiated HTTP/HTTPS popups are routed to tabs | Needs native integration coverage |
-| New-tab page | Nexora identity and bookmark shortcut entry points; toolbar is the sole search field | Shortcut storage is coupled to bookmarks rather than a separate shortcut model |
-| Private browsing | Not implemented | Do not label tabs private or imply isolation |
-| Site permissions | Not implemented | Camera, microphone, location, notifications and related requests need explicit decisions |
-| Ad blocking | Not implemented | No request filter engine or maintained filter-list pipeline |
-| Find in page | Not implemented | No CEF find-controller UI or command |
-| Extensions, sync, installer, updates | Not implemented | CEF support and packaging/security requirements must be investigated first |
-| Tests | Node built-in tests cover URL normalization and page-title formatting | Tab/workspace/storage/bridge/download logic and native lifecycle have no automated coverage |
+The highest-impact maintainability issue is concentrated ownership: the UI state/components/styles are monolithic, while native initialization, browser lifecycles, bridge, navigation, and downloads are similarly concentrated in `native/app.cpp`. Refactor these boundaries incrementally; avoid changing the CEF lifecycle and frontend component structure in the same step.
 
-## Verified build and runtime context
+## Security and release blockers
 
-- The Windows build uses React/Vite, CMake, Visual Studio C++ tools, and an external CEF 154 x64 distribution under `F:\Nexora-CEF`.
-- The CEF distribution is deliberately not checked into this repository. A Chromium source checkout is unnecessary for ordinary application features.
-- Previous development work verified real CEF navigation and a local attachment download. The latest UI changes were built successfully with `npm.cmd run build:windows`.
-- `npm.cmd test` covers the extracted address service; no third-party test dependency was added.
-- The CEF runtime artifacts inspected in the configured extraction did not reveal a sandbox-named library. This observation alone does not establish every upstream sandbox packaging requirement; it does establish that Nexora must not claim sandboxing is enabled.
-- The checked-in README previously contained merge-conflict markers. They have been removed and the capability/limitation claims reconciled with the source.
+1. **CEF sandbox is explicitly disabled.** `native/main.cpp` sets `CefSettings::no_sandbox = true`. This is a release blocker for an ordinary-user browser. The repository includes the CEF sandbox header but does not currently initialize the sandbox with an inspected, verified CEF distribution. Do not remove the setting or claim sandboxing without implementing and building the supported CEF Windows sandbox setup.
+2. **Profile storage is adjacent to the executable.** `cache_path` points to a `profile` directory under the executable directory. This is unsuitable for a normal per-user install and may fail under protected install locations. Move it to a deliberate per-user application-data location with a migration/compatibility plan.
+3. **Privacy controls are incomplete.** Clearing the displayed visit list does not clear Chromium cookies/cache; private profiles and site-permission prompts are absent.
+4. **Bridge and navigation policy require targeted adversarial validation.** The bridge is gated to the UI main frame and website main-frame navigation is restricted to HTTP/HTTPS, which are useful boundaries. The policy, redirects, popup behavior, local custom scheme, message argument validation, and download path handling still need systematic tests before release.
+5. **Native integration lacks automated coverage.** The CEF host, child-window z-order, focus, high-DPI geometry, browser shutdown, and download callbacks have no automated integration suite in the repository.
 
-## Security and reliability blockers
+Do not describe the current build as secure or production-ready until the sandbox, profile placement, permission/privacy behavior, and release packaging have been resolved and verified.
 
-1. **Chromium sandbox disabled.** `native/main.cpp` sets `CefSettings.no_sandbox = true`. Determine the supported sandbox configuration for this exact CEF package and Windows toolchain, then implement and test it. Do not simply flip the setting unless the required CEF sandbox artifacts and startup configuration are present.
-2. **Profile location is build-relative.** The cache/profile currently lives next to the executable in `build\windows\Release\profile`; a proper per-user application-data directory and migration plan are needed before installation/upgrades.
-3. **Native views and focus.** `UpdateSiteVisibility()` calls `SetFocus` on visible browser windows while updating visibility. Audit focus stealing and input behavior, and test resizing, hidden tabs, menus, dialogs, window activation, and DPI changes before changing the lifecycle.
-4. **No site-permission policy.** Implement explicit, safe defaults and prompts using the CEF APIs for this version. Never auto-grant sensitive permissions.
-5. **Native bridge contract is monolithic.** Document and centralize commands/events, impose bounded input validation, and keep renderer-origin restrictions enforced in C++.
-6. **Persistence is partial.** Settings/bookmarks/history/workspaces/download records use UI local storage, but the tab collection is not serialized. Add versioned migration and crash-safe validation without discarding current user data.
-7. **Release hardening is absent.** There is no installer, signing, update channel, or packaged clean-machine acceptance suite. Current release status must remain development-only.
+## Implementation plan
 
-## Recommended implementation order
+1. **Audit and stabilize:** Keep the existing CEF architecture; repair any documentation discrepancies, establish passing frontend tests/build, and capture native build/runtime prerequisites and security blockers.
+2. **Modularize the frontend:** Extract app providers/state, window frame, sidebar/workspaces/tabs, toolbar/address bar, panels, and overlays in small behavior-preserving steps. Split styles by feature while keeping shared design tokens centralized.
+3. **Modularize native CEF ownership:** Separate initialization, browser lifecycle, navigation/viewport, bridge commands/events, popup handling, and downloads. Preserve the current protocol and validate after each extraction.
+4. **Complete core browser behavior:** Add resilient tab/session persistence and startup restore, improve navigation/suggestion behavior, and complete browser settings without silently discarding existing local data.
+5. **Polish the interface:** Refine hierarchy, typography, sidebar behavior, animation and native viewport layering; retain the toolbar as the single address/search field and keep the default new-tab page sparse.
+6. **Address security and privacy:** Establish supported CEF sandboxing, move profile data to a stable user location, test bridge/navigation/download boundaries, and implement privacy and permissions only with correct native profile semantics.
+7. **Evaluate advanced features:** Implement find-in-page and assess ad blocking, extensions, and split view against CEF capabilities. Clearly label unsupported features rather than presenting placeholders as functional.
+8. **Release preparation:** Run the complete test suite, perform a clean Windows build with the external CEF distribution, exercise the packaged app, document remaining limitations, and prepare installer/signing work separately.
 
-1. **Stabilize and verify:** keep the README accurate, maintain the focused new-tab/sidebar corrections, establish a reproducible Windows build and a manual CEF smoke checklist.
-2. **Add targeted tests:** extract URL normalization and pure state/storage logic first; add frontend tests only with a focused dependency and clear coverage. Add native tests around bridge validation and path/navigation policies where they can run reliably.
-3. **Separate frontend by responsibility:** extract the address/search helper, persistence and validation, bridge adapter, and independent internal pages in small buildable changes. Keep `App.jsx` as the composition root until each extraction has regression coverage.
-4. **Stabilize native browser lifecycle:** isolate browser/tab ownership and viewport/focus behavior, then test create/switch/close, resize, minimize/maximize, and popup flows with actual CEF views.
-5. **Resolve security fundamentals:** investigate supported sandbox packaging; establish a stable profile directory; formalize navigation, download, and permission policies; document bridge messages and reject invalid inputs explicitly.
-6. **Complete persistence and core UX:** restore sessions according to settings; verify bookmarks/history/download behavior against actual CEF events; preserve data using versioned migrations.
-7. **Evaluate optional features:** investigate find-in-page, off-the-record contexts, request filtering, extensions, and split view against CEF 154 APIs before exposing user-facing controls.
-8. **Release only after evidence:** clean Windows build, real-browser acceptance checklist, runtime packaging validation, installer/uninstaller, license notices, signing, and honest release notes.
+## Validation status
 
-## Structural decisions
+Validated on 2026-10-16:
 
-The proposed directory tree in the product brief is a target, not a requirement to create empty modules. Begin with narrowly scoped extractions from the existing three-file frontend/native implementation and add folders only when they contain working behavior. Keep the existing CEF child-window architecture until lifecycle tests demonstrate a safe alternative.
+- `npm.cmd test`: passed, 7 tests.
+- `npm.cmd run build`: passed.
+- `npm.cmd run build:windows`: passed and produced `build\windows\Release\nexora.exe` using the external CEF 154 distribution.
+- CMake emitted a warning that ATL is not supported by the installed Visual C++ toolchain. It did not prevent this build.
+
+The Windows executable was compiled but not launched or exercised against live sites in this audit. The successful native build does not resolve the sandbox/profile blockers or establish release readiness.

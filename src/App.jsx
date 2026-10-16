@@ -7,6 +7,7 @@ import {
   PanelLeftClose, PanelLeftOpen, ShieldCheck, SlidersHorizontal, SplitSquareHorizontal, X, XCircle,
 } from 'lucide-react'
 import { displayTitle, ENGINE_URLS, NEW_TAB_URL, normalizeAddress } from './services/browser/addressService.js'
+import { createSessionSnapshot, restoreSession } from './services/browser/sessionService.js'
 import { readStored, writeStored } from './storage.js'
 
 const defaultSettings = {
@@ -15,11 +16,13 @@ const defaultSettings = {
   accent: 'silver',
   density: 'comfortable',
   textSize: 'normal',
+  searchSuggestions: true,
   showBookmarksBar: true,
   sidebarCollapsed: false,
   sidebarWidth: 236,
   compactMode: false,
   startup: 'newtab',
+  restoreSession: false,
   homePage: 'https://www.google.com',
   downloadDirectory: '',
 }
@@ -56,13 +59,13 @@ function MenuOption({ icon: Icon, label, shortcut, detail, onClick, disabled = f
   )
 }
 
-function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, historyItems, searchEngine, ariaLabel, inputRef }) {
+function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, historyItems, searchEngine, ariaLabel, inputRef, enabled = true }) {
   const listId = useId()
   const [open, setOpen] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const suggestions = useMemo(() => {
     const query = value.trim().toLowerCase()
-    if (!query) return []
+    if (!query || !enabled) return []
     const seen = new Set()
     const local = [
       ...bookmarks.map((item) => ({ ...item, kind: 'bookmark' })),
@@ -76,7 +79,7 @@ function AddressSuggestions({ value, onChange, onSubmitValue, bookmarks, history
       { id: 'search', kind: 'search', title: `Search for “${value.trim()}”`, url: searchEngine },
       ...local,
     ]
-  }, [bookmarks, historyItems, searchEngine, value])
+  }, [bookmarks, enabled, historyItems, searchEngine, value])
   const choose = (suggestion) => {
     setOpen(false)
     setSelectedIndex(-1)
@@ -594,15 +597,15 @@ function SettingsPanel({ settings, setSettings, clearHistory, category, setCateg
           {Object.keys(ENGINE_URLS).map((engine) => <option key={engine}>{engine}</option>)}
         </select>
       </SettingRow>
-      <ToggleRow title="Search suggestions" description="Suggestions are not available yet." checked={false} onChange={() => {}} disabled />
-      <div className="setting-note"><CircleHelp size={14} /> Search queries use the selected search engine.</div>
+      <ToggleRow title="Local suggestions" description="Show matching bookmarks and locally stored history while typing. No keystrokes are sent to a suggestion service." checked={settings.searchSuggestions} onChange={(value) => update('searchSuggestions', value)} />
+      <div className="setting-note"><CircleHelp size={14} /> Suggestions stay on this device; submitted searches use the selected search engine.</div>
     </>
   } else if (category === 'tabs') {
     content = <>
       <SettingRow title="New tab page" description="Nexora’s local start page is used for new tabs.">
         <span className="setting-status">Nexora new tab</span>
       </SettingRow>
-      <ToggleRow title="Continue where you left off" description="Session restore is not available yet." checked={false} onChange={() => {}} disabled />
+      <ToggleRow title="Continue where you left off" description="Restore open tabs and workspaces when Nexora starts." checked={settings.restoreSession} onChange={(value) => update('restoreSession', value)} />
       <div className="setting-note"><Keyboard size={14} /> Shortcuts: Ctrl+T new tab, Ctrl+W close tab, Ctrl+Shift+T reopen, Ctrl+Tab switch.</div>
     </>
   } else if (category === 'bookmarks') {
@@ -707,19 +710,25 @@ export default function App() {
       accent: ['silver', 'blue', 'sage'].includes(saved.accent) ? saved.accent : defaultSettings.accent,
       density: ['comfortable', 'compact'].includes(saved.density) ? saved.density : defaultSettings.density,
       textSize: ['normal', 'large'].includes(saved.textSize) ? saved.textSize : defaultSettings.textSize,
+      searchSuggestions: typeof saved.searchSuggestions === 'boolean' ? saved.searchSuggestions : defaultSettings.searchSuggestions,
       showBookmarksBar: typeof saved.showBookmarksBar === 'boolean' ? saved.showBookmarksBar : defaultSettings.showBookmarksBar,
       sidebarCollapsed: Boolean(saved.sidebarCollapsed),
       sidebarWidth: Number.isFinite(saved.sidebarWidth) ? Math.min(340, Math.max(220, saved.sidebarWidth)) : defaultSettings.sidebarWidth,
       compactMode: Boolean(saved.compactMode),
       startup: ['newtab', 'home'].includes(saved.startup) ? saved.startup : defaultSettings.startup,
+      restoreSession: typeof saved.restoreSession === 'boolean' ? saved.restoreSession : defaultSettings.restoreSession,
       homePage: typeof saved.homePage === 'string' ? saved.homePage : defaultSettings.homePage,
       downloadDirectory: typeof saved.downloadDirectory === 'string' ? saved.downloadDirectory : defaultSettings.downloadDirectory,
     }
   })
+  const [workspaces, setWorkspaces] = useState(readWorkspaces)
+  const [initialSession] = useState(() => (
+    settings.restoreSession ? restoreSession(readStored('session', null), workspaces) : null
+  ))
   const [tabs, setTabs] = useState(() => {
-    const storedWorkspaces = readWorkspaces()
-    const storedWorkspaceId = safeRead('activeWorkspace', storedWorkspaces[0].id, (value) => typeof value === 'string')
-    const startupWorkspaceId = storedWorkspaces.some((workspace) => workspace.id === storedWorkspaceId) ? storedWorkspaceId : storedWorkspaces[0].id
+    if (initialSession) return initialSession.tabs
+    const storedWorkspaceId = safeRead('activeWorkspace', workspaces[0].id, (value) => typeof value === 'string')
+    const startupWorkspaceId = workspaces.some((workspace) => workspace.id === storedWorkspaceId) ? storedWorkspaceId : workspaces[0].id
     const tab = { ...newTab(), workspaceId: startupWorkspaceId }
     if (settings.startup === 'home') {
       const url = normalizeAddress(settings.homePage, settings.searchEngine)
@@ -727,9 +736,9 @@ export default function App() {
     }
     return [tab]
   })
-  const [activeId, setActiveId] = useState(tabs[0].id)
-  const [workspaces, setWorkspaces] = useState(readWorkspaces)
+  const [activeId, setActiveId] = useState(initialSession?.activeTabId ?? tabs[0].id)
   const [workspaceId, setWorkspaceId] = useState(() => {
+    if (initialSession) return initialSession.workspaceId
     const saved = safeRead('activeWorkspace', readWorkspaces()[0].id, (value) => typeof value === 'string')
     return readWorkspaces().some((workspace) => workspace.id === saved) ? saved : readWorkspaces()[0].id
   })
@@ -744,6 +753,8 @@ export default function App() {
   const [panel, setPanel] = useState(null)
   const [settingsCategory, setSettingsCategory] = useState('general')
   const [address, setAddress] = useState('')
+  const [findOpen, setFindOpen] = useState(false)
+  const [findText, setFindText] = useState('')
   const [notice, setNotice] = useState('')
   const [openMenu, setOpenMenu] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
@@ -751,6 +762,7 @@ export default function App() {
   const [workspaceToRemove, setWorkspaceToRemove] = useState(null)
   const [draggedTabId, setDraggedTabId] = useState(null)
   const addressRef = useRef(null)
+  const findRef = useRef(null)
   const activeTab = tabs.find((tab) => tab.id === activeId) ?? tabs[0]
   const visibleTabs = tabs.filter((tab) => tab.workspaceId === workspaceId)
   const pinnedTabs = visibleTabs.filter((tab) => tab.pinned)
@@ -764,8 +776,19 @@ export default function App() {
   useEffect(() => writeStored('workspaces', workspaces), [workspaces])
   useEffect(() => writeStored('activeWorkspace', workspaceId), [workspaceId])
   useEffect(() => {
+    writeStored('session', createSessionSnapshot(tabs, activeId, workspaceId))
+  }, [tabs, activeId, workspaceId])
+  useEffect(() => {
     setAddress(activeTab?.url === NEW_TAB_URL ? '' : activeTab?.url ?? '')
   }, [activeTab?.id, activeTab?.url])
+  useEffect(() => {
+    if (findOpen) findRef.current?.focus()
+  }, [findOpen])
+  useEffect(() => {
+    if (findOpen && nativeConnected && activeTab?.url !== NEW_TAB_URL && findText) {
+      window.nexora.find(activeTab.id, findText, true, false, false)
+    }
+  }, [activeTab?.id, findOpen, nativeConnected])
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: light)')
     const applyTheme = () => {
@@ -828,6 +851,25 @@ export default function App() {
       setNotice('That address is not allowed.')
       window.setTimeout(() => setNotice(''), 3200)
       return
+    }
+    const startFind = () => {
+      if (!nativeConnected || !activeTab || activeTab.url === NEW_TAB_URL) {
+        setNotice('Find in page is available for open websites in the desktop browser.')
+        window.setTimeout(() => setNotice(''), 3200)
+        return
+      }
+      setOpenMenu(null)
+      setFindOpen(true)
+    }
+    const closeFind = () => {
+      if (nativeConnected && activeTab) window.nexora.stopFinding(activeTab.id, true)
+      setFindText('')
+      setFindOpen(false)
+    }
+    const searchInPage = (forward = true, findNext = false, text = findText) => {
+      if (nativeConnected && activeTab && activeTab.url !== NEW_TAB_URL) {
+        window.nexora.find(activeTab.id, text, forward, false, findNext)
+      }
     }
     if (url === NEW_TAB_URL) {
       setTabs((current) => current.map((tab) => tab.id === activeId ? { ...tab, title: 'New tab', url, back: [...tab.back, tab.url], forward: [] } : tab))
@@ -1081,6 +1123,10 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (findOpen) {
+          closeFind()
+          return
+        }
         setOpenMenu(null)
         setContextMenu(null)
         return
@@ -1102,6 +1148,9 @@ export default function App() {
         setPanel(null)
         addressRef.current?.focus()
         addressRef.current?.select()
+      } else if (key === 'f') {
+        event.preventDefault()
+        startFind()
       } else if (event.shiftKey && key === 't') {
         event.preventDefault()
         restoreTab()
@@ -1129,7 +1178,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeId, activeTab?.url, activeTab?.isLoading, nativeConnected, tabs, visibleTabs, closedTabs, settings.compactMode, settings.sidebarCollapsed])
+  }, [activeId, activeTab?.url, activeTab?.isLoading, nativeConnected, tabs, visibleTabs, closedTabs, settings.compactMode, settings.sidebarCollapsed, findOpen])
 
   useEffect(() => {
     const closeOnOutsideClick = (event) => {
@@ -1246,13 +1295,38 @@ export default function App() {
                 }
               }}>{activeTab?.isLoading ? <X size={16} /> : <RotateCw size={16} />}</IconButton>
             </div>
+            {findOpen ? (
+              <form className="address-field find-field" role="search" onSubmit={(event) => { event.preventDefault(); searchInPage(true, true) }}>
+                <Search size={14} className="address-lock" />
+                <input
+                  ref={findRef}
+                  type="search"
+                  aria-label="Find in page"
+                  placeholder="Find in page"
+                  value={findText}
+                  onChange={(event) => { setFindText(event.target.value); searchInPage(true, false, event.target.value) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      searchInPage(!event.shiftKey, true)
+                    }
+                  }}
+                />
+                <div className="find-actions">
+                  <IconButton label="Previous match" disabled={!findText} onClick={() => searchInPage(false, true)}><ArrowLeft size={15} /></IconButton>
+                  <IconButton label="Next match" disabled={!findText} onClick={() => searchInPage(true, true)}><ArrowRight size={15} /></IconButton>
+                  <IconButton label="Close find bar" onClick={closeFind}><X size={15} /></IconButton>
+                </div>
+              </form>
+            ) : (
             <form className="address-field" onSubmit={(event) => { event.preventDefault(); navigate(address) }}>
               {activeTab?.url.startsWith('https://')
                 ? <LockKeyhole size={14} className="address-lock" />
                 : <Globe2 size={14} className="address-lock" />}
-              <AddressSuggestions inputRef={addressRef} ariaLabel="Address and search" value={address} onChange={setAddress} onSubmitValue={navigate} bookmarks={bookmarks} historyItems={historyItems} searchEngine={settings.searchEngine} />
+              <AddressSuggestions inputRef={addressRef} ariaLabel="Address and search" value={address} onChange={setAddress} onSubmitValue={navigate} bookmarks={bookmarks} historyItems={historyItems} searchEngine={settings.searchEngine} enabled={settings.searchSuggestions} />
               {activeTab?.url !== NEW_TAB_URL && <IconButton label={isBookmarked ? 'Remove bookmark' : 'Add bookmark'} active={isBookmarked} onClick={bookmarkCurrent}>{isBookmarked ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}</IconButton>}
             </form>
+            )}
             <div className="toolbar-actions">
               <IconButton label="Home" onClick={() => navigate(settings.homePage)}><Home size={16} /></IconButton>
               <IconButton label="Bookmarks" active={panel === 'bookmarks'} onClick={() => openPanel(panel === 'bookmarks' ? null : 'bookmarks')}><Bookmark size={16} /></IconButton>
@@ -1270,7 +1344,7 @@ export default function App() {
                   <MenuOption icon={settings.sidebarCollapsed ? PanelLeftOpen : PanelLeftClose} label={settings.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} shortcut="Alt+Shift+B" onClick={() => { setSettings((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed })); setOpenMenu(null) }} />
                   <MenuOption icon={Monitor} label={settings.compactMode ? 'Exit compact mode' : 'Compact mode'} shortcut="Alt+Shift+C" onClick={() => { setSettings((current) => ({ ...current, compactMode: !current.compactMode })); setOpenMenu(null) }} />
                   <div className="menu-divider" />
-                  <MenuOption icon={FileSearch} label="Find in page" detail="Requires Chromium" disabled />
+                  <MenuOption icon={FileSearch} label="Find in page" shortcut="Ctrl+F" disabled={!nativeConnected || activeTab?.url === NEW_TAB_URL} onClick={startFind} />
                   <MenuOption icon={Globe2} label="Print" detail="Requires Chromium" disabled />
                   <MenuOption icon={Settings} label="Settings" onClick={() => openSettings()} />
                   <MenuOption icon={CircleHelp} label="About Nexora" onClick={() => openPanel('about')} />

@@ -1,15 +1,18 @@
 #include "app.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <cwchar>
 
+#include <shlobj.h>
 #include <windows.h>
 #include <windowsx.h>
 
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
 #include "include/cef_sandbox_win.h"
+#include "include/cef_version_info.h"
 
 namespace {
 
@@ -100,23 +103,91 @@ bool CreateMainWindow(HINSTANCE instance) {
   return true;
 }
 
+bool GetProfileDirectory(std::filesystem::path& profile,
+                        std::wstring& error_message) {
+  PWSTR local_app_data = nullptr;
+  const HRESULT result = SHGetKnownFolderPath(
+      FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
+  if (FAILED(result) || !local_app_data) {
+    error_message = L"Nexora could not locate the current user's local application data folder.";
+    if (local_app_data) CoTaskMemFree(local_app_data);
+    return false;
+  }
+
+  profile = std::filesystem::path(local_app_data) / L"Nexora" / L"Browser" / L"Profile";
+  CoTaskMemFree(local_app_data);
+
+  std::error_code error;
+  std::filesystem::create_directories(profile, error);
+  if (error) {
+    error_message = L"Nexora could not create its browser profile in Local AppData.";
+    return false;
+  }
+
+  const std::filesystem::path marker = profile / L".nexora-profile-initialized";
+  if (!std::filesystem::exists(marker, error) && !error) {
+    std::wstring executable_path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(
+        nullptr, executable_path.data(),
+        static_cast<DWORD>(executable_path.size()));
+    if (length == 0 || length >= executable_path.size()) {
+      error_message = L"Nexora could not determine its executable directory to migrate the existing profile.";
+      return false;
+    }
+    executable_path.resize(length);
+    const std::filesystem::path legacy_profile =
+        std::filesystem::path(executable_path).parent_path() / L"profile";
+    if (std::filesystem::is_directory(legacy_profile, error) && !error) {
+      const auto options = std::filesystem::copy_options::recursive |
+                           std::filesystem::copy_options::copy_symlinks |
+                           std::filesystem::copy_options::overwrite_existing;
+      for (std::filesystem::directory_iterator iterator(legacy_profile, error), end;
+           !error && iterator != end; iterator.increment(error)) {
+        std::filesystem::copy(
+            iterator->path(), profile / iterator->path().filename(), options, error);
+      }
+      if (error) {
+        error_message = L"Nexora could not migrate the existing browser profile. The original profile has been left in place.";
+        return false;
+      }
+    } else if (error) {
+      error_message = L"Nexora could not inspect the existing browser profile.";
+      return false;
+    }
+
+    std::ofstream initialized(marker, std::ios::binary | std::ios::trunc);
+    if (!initialized) {
+      error_message = L"Nexora could not initialize its browser profile.";
+      return false;
+    }
+  } else if (error) {
+    error_message = L"Nexora could not inspect its browser profile.";
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace
 
-int APIENTRY wWinMain(HINSTANCE instance,
-                      HINSTANCE,
-                      wchar_t*,
-                      int) {
+int RunNexora(HINSTANCE instance, void* sandbox_info) {
+  if (!sandbox_info) {
+    MessageBoxW(nullptr, L"The CEF sandbox could not be initialized. Nexora will not start without browser process isolation.",
+                L"Nexora Browser", MB_OK | MB_ICONERROR);
+    return EXIT_FAILURE;
+  }
+
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   CefMainArgs main_args(instance);
   g_app = new NexoraApp(GetApplicationUiUrl());
 
-  const int subprocess_exit_code = CefExecuteProcess(main_args, g_app, nullptr);
+  const int subprocess_exit_code = CefExecuteProcess(main_args, g_app, sandbox_info);
   if (subprocess_exit_code >= 0) {
     return subprocess_exit_code;
   }
 
   CefSettings settings;
-  settings.no_sandbox = true;
+  settings.no_sandbox = false;
   settings.windowless_rendering_enabled = false;
   settings.log_severity = LOGSEVERITY_WARNING;
   wchar_t devtools_port[8]{};
@@ -130,15 +201,19 @@ int APIENTRY wWinMain(HINSTANCE instance,
       settings.remote_debugging_port = static_cast<int>(port);
     }
   }
-  CefString(&settings.browser_subprocess_path) =
-      (std::filesystem::path(GetExecutableDirectory()) / L"nexora.exe").wstring();
+  std::filesystem::path profile_directory;
+  std::wstring profile_error;
+  if (!GetProfileDirectory(profile_directory, profile_error)) {
+    MessageBoxW(nullptr, profile_error.c_str(), L"Nexora Browser",
+                MB_OK | MB_ICONERROR);
+    return EXIT_FAILURE;
+  }
   CefString(&settings.resources_dir_path) = GetExecutableDirectory();
   CefString(&settings.locales_dir_path) =
       (std::filesystem::path(GetExecutableDirectory()) / L"locales").wstring();
-  CefString(&settings.cache_path) =
-      (std::filesystem::path(GetExecutableDirectory()) / L"profile").wstring();
+  CefString(&settings.cache_path) = profile_directory.wstring();
 
-  if (!CefInitialize(main_args, settings, g_app, nullptr)) {
+  if (!CefInitialize(main_args, settings, g_app, sandbox_info)) {
     return EXIT_FAILURE;
   }
 
@@ -155,4 +230,16 @@ int APIENTRY wWinMain(HINSTANCE instance,
   CefRunMessageLoop();
   CefShutdown();
   return EXIT_SUCCESS;
+}
+
+#if !defined(CEF_USE_BOOTSTRAP)
+#error "Nexora requires the CEF bootstrap sandbox build."
+#endif
+
+CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance,
+                                    LPWSTR,
+                                    int,
+                                    void* sandbox_info,
+                                    cef_version_info_t*) {
+  return RunNexora(instance, sandbox_info);
 }

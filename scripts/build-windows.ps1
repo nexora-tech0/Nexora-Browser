@@ -59,11 +59,17 @@ try {
     throw 'The native CEF build failed.'
   }
 
-  $executable = Join-Path $buildDirectory 'Release\nexora.exe'
+  $releaseDirectory = Join-Path $buildDirectory 'Release'
+  $executable = Join-Path $releaseDirectory 'nexora.exe'
+  $clientLibrary = Join-Path $releaseDirectory 'nexora.dll'
   if (-not (Test-Path $executable)) {
-    throw "The build completed without producing the expected browser executable: $executable"
+    throw "The build completed without producing the expected CEF bootstrap executable: $executable"
+  }
+  if (-not (Test-Path $clientLibrary)) {
+    throw "The build completed without producing the sandboxed Nexora client library: $clientLibrary"
   }
   Write-Host "Nexora Browser built: $executable"
+  Write-Host "Sandboxed CEF client: $clientLibrary"
   if ($Launch) {
     Start-Process -FilePath $executable -WorkingDirectory (Split-Path $executable)
   }
